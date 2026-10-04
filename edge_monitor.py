@@ -20,8 +20,11 @@ import psutil
 from constants import (
     DEFAULT_DISK_PATH,
     DEFAULT_INTERVAL_SECONDS,
+    DEFAULT_SPOOL_PATH,
     GREENGRASS_IPC_SOCKET_ENV,
     PUBLISH_TIMEOUT_SECONDS,
+    SPOOL_PATH_ENV,
+    CPU_WARNING_THRESHOLD_PERCENT,
 )
 from gpu_metrics import NvidiaGpuCollector
 from greengrass_publisher import GreengrassIpcPublisher, SpoolPublisherWorker
@@ -66,11 +69,22 @@ class MetricsCollector:
 def _request_stop(stop_event: Event, _signum: int, _frame: Any) -> None:
     stop_event.set()
 
+def _log_threshold_warnings(sample: Dict[str, Any]) -> None:
+    cpu_percent = sample["cpu_usage_percent"]
+    if cpu_percent > CPU_WARNING_THRESHOLD_PERCENT:
+        LOGGER.warning(
+            "High CPU usage on %s: %.1f%% (threshold: %.1f%%)",
+            sample["device_id"],
+            cpu_percent,
+            CPU_WARNING_THRESHOLD_PERCENT,
+        )
+
 
 def run() -> int:
     try:
         collector = MetricsCollector()
-        spool = MetricsSpool()
+        spool_path = os.environ.get(SPOOL_PATH_ENV, DEFAULT_SPOOL_PATH)
+        spool = MetricsSpool(spool_path)
         # Validate the path at startup rather than repeatedly logging a bad path.
         psutil.disk_usage(DEFAULT_DISK_PATH)
     except (OSError, ValueError, sqlite3.Error) as exc:
@@ -104,6 +118,7 @@ def run() -> int:
         while not stop_event.is_set():
             try:
                 sample = collector.collect()
+                _log_threshold_warnings(sample)
                 spool.store(sample)
                 print(json.dumps(sample, separators=(",", ":")), flush=True)
             except (OSError, ValueError, sqlite3.Error) as exc:

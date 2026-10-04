@@ -1,8 +1,10 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import call, patch
+from threading import Event
 
-from edge_monitor import MetricsCollector
+from constants import GREENGRASS_IPC_SOCKET_ENV, SPOOL_PATH_ENV, CPU_WARNING_THRESHOLD_PERCENT
+from edge_monitor import MetricsCollector, run, _log_threshold_warnings
 
 
 class FakeGpuCollector:
@@ -59,6 +61,57 @@ class MetricsCollectorTests(unittest.TestCase):
         cpu.assert_called_once_with(interval=None)
         collector.collect()
         self.assertEqual(cpu.call_args_list, [call(interval=None), call(interval=None)])
+    
+    def test_run_uses_spool_path_from_environment(self):
+        spool_path = "/tmp/test-edge-monitor/metrics.sqlite3"
+        stop_event = Event()
+        stop_event.set()
+
+        with patch.dict(
+            "edge_monitor.os.environ",
+            {
+                SPOOL_PATH_ENV: spool_path,
+                GREENGRASS_IPC_SOCKET_ENV: "",
+            },
+        ), patch("edge_monitor.MetricsCollector"), patch(
+            "edge_monitor.MetricsSpool"
+        ) as spool_factory, patch(
+            "edge_monitor.psutil.disk_usage"
+        ), patch(
+            "edge_monitor.Event", return_value=stop_event
+        ), patch(
+            "edge_monitor.signal.signal"
+        ):
+            self.assertEqual(run(), 0)
+
+        spool_factory.assert_called_once_with(spool_path)
+    
+    @patch("edge_monitor.LOGGER.warning")
+    def test_cpu_above_threshold_logs_warning(self, warning):
+        _log_threshold_warnings(
+            {"device_id": "test-device", "cpu_usage_percent": 91.0}
+        )
+
+        warning.assert_called_once()
+        self.assertEqual(
+            warning.call_args.args[0],
+            "High CPU usage on %s: %.1f%% (threshold: %.1f%%)",
+        )
+        self.assertEqual(
+            warning.call_args.args[1:],
+            ("test-device", 91.0, CPU_WARNING_THRESHOLD_PERCENT),
+        )
+
+    @patch("edge_monitor.LOGGER.warning")
+    def test_cpu_at_threshold_does_not_log_warning(self, warning):
+        _log_threshold_warnings(
+            {
+                "device_id": "test-device",
+                "cpu_usage_percent": CPU_WARNING_THRESHOLD_PERCENT,
+            }
+        )
+
+        warning.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
