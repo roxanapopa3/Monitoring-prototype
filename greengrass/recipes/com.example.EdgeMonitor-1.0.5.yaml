@@ -1,0 +1,45 @@
+RecipeFormatVersion: '2020-01-25'
+ComponentName: com.example.EdgeMonitor
+ComponentVersion: '1.0.5'
+ComponentDescription: Collects and publishes device hardware metrics.
+ComponentPublisher: Prototype
+
+ComponentConfiguration:
+  DefaultConfiguration:
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        "com.example.EdgeMonitor:pub:1":
+          policyDescription: Allow publishing hardware metrics to IoT Core.
+          operations:
+            - aws.greengrass#PublishToIoTCore
+          resources:
+            - devices/*/metrics
+
+Manifests:
+  - Platform:
+      os: linux
+    Lifecycle:
+      Setenv:
+        EDGE_MONITOR_SPOOL_PATH: "{work:path}/metrics.sqlite3"
+      Install: |-
+        set -eu
+        if command -v python3.8 >/dev/null 2>&1; then
+          PYTHON=python3.8
+        else
+          PYTHON=python3
+        fi
+        "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' || {
+          echo "Edge Monitor requires Python 3.8 or newer" >&2
+          exit 1
+        }
+        "$PYTHON" -m venv {work:path}/venv
+        {work:path}/venv/bin/pip install --disable-pip-version-check -r {artifacts:path}/requirements.txt
+      Run: |-
+        {work:path}/venv/bin/python {artifacts:path}/edge_monitor.py
+    Artifacts:
+      - URI: s3://edge-monitor-artifacts/com.example.EdgeMonitor/1.0.5/constants.py
+      - URI: s3://edge-monitor-artifacts/com.example.EdgeMonitor/1.0.5/edge_monitor.py
+      - URI: s3://edge-monitor-artifacts/com.example.EdgeMonitor/1.0.5/gpu_metrics.py
+      - URI: s3://edge-monitor-artifacts/com.example.EdgeMonitor/1.0.5/greengrass_publisher.py
+      - URI: s3://edge-monitor-artifacts/com.example.EdgeMonitor/1.0.5/metrics_spool.py
+      - URI: s3://edge-monitor-artifacts/com.example.EdgeMonitor/1.0.5/requirements.txt
