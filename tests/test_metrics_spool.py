@@ -33,14 +33,21 @@ class MetricsSpoolTests(unittest.TestCase):
         self.assertEqual(spool.count(), 2)
         self.assertEqual(spool.oldest()[1]["sample_id"], "second")
 
-    def test_old_samples_expire(self):
+    def test_old_samples_expire_when_reading_oldest(self):
+        spool = MetricsSpool(self.database_path, max_samples=5, max_age_seconds=60)
+        with patch("metrics_spool.time.time", return_value=1000):
+            spool.store({"sample_id": "expired"})
+
+        with patch("metrics_spool.time.time", return_value=1061):
+            self.assertIsNone(spool.oldest())
+
+    def test_old_samples_expire_when_counting(self):
         spool = MetricsSpool(self.database_path, max_samples=5, max_age_seconds=60)
         with patch("metrics_spool.time.time", return_value=1000):
             spool.store({"sample_id": "expired"})
 
         with patch("metrics_spool.time.time", return_value=1061):
             self.assertEqual(spool.count(), 0)
-            self.assertIsNone(spool.oldest())
 
     def test_acknowledgement_removes_sample(self):
         spool = MetricsSpool(self.database_path, max_samples=5, max_age_seconds=3600)

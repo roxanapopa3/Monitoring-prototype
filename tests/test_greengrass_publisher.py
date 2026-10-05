@@ -1,7 +1,7 @@
 import tempfile
 import threading
 import unittest
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,6 +56,22 @@ class GreengrassIpcPublisherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             publisher.publish({"cpu_usage_percent": 20.0})
         client_type.return_value.publish_to_iot_core_async.assert_not_called()
+    
+    @patch("awsiot.greengrasscoreipc.clientv2.GreengrassCoreIPCClientV2")
+    def test_pending_publish_times_out(self, client_type):
+        client = client_type.return_value
+        pending = Future()
+        client.publish_to_iot_core_async.return_value = pending
+        publisher = GreengrassIpcPublisher(timeout_seconds=0.01)
+
+        try:
+            with self.assertRaises(FutureTimeoutError):
+                publisher.publish({"device_id": "edge-1"})
+        finally:
+            publisher.close()
+
+        client.publish_to_iot_core_async.assert_called_once()
+        client.close.assert_called_once_with()
 
 
 class SpoolPublisherWorkerTests(unittest.TestCase):
@@ -108,6 +124,31 @@ class SpoolPublisherWorkerTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(self.spool.count(), 1)
         self.assertEqual(self.spool.oldest()[1], sample)
+    
+    @patch("greengrass_publisher.PUBLISH_RETRY_INITIAL_SECONDS", 0.001)
+    def test_failed_publish_retries_then_acknowledges_on_success(self):
+        sample = {"device_id": "edge-1", "sample": 1}
+        self.spool.store(sample)
+        stopped = threading.Event()
+
+        class RecoveringPublisher:
+            def __init__(self):
+                self.attempts = 0
+
+            def publish(self, _sample):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError("temporary connection failure")
+                stopped.set()
+
+        publisher = RecoveringPublisher()
+        worker = SpoolPublisherWorker(self.spool, publisher, stopped)
+        worker.start()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(publisher.attempts, 2)
+        self.assertEqual(self.spool.count(), 0)
 
 if __name__ == "__main__":
     unittest.main()
