@@ -24,7 +24,7 @@ from constants import (
     GREENGRASS_IPC_SOCKET_ENV,
     PUBLISH_TIMEOUT_SECONDS,
     SPOOL_PATH_ENV,
-    CPU_WARNING_THRESHOLD_PERCENT,
+    USAGE_WARNING_THRESHOLD_PERCENT,
 )
 from gpu_metrics import NvidiaGpuCollector
 from greengrass_publisher import GreengrassIpcPublisher, SpoolPublisherWorker
@@ -70,14 +70,22 @@ def _request_stop(stop_event: Event, _signum: int, _frame: Any) -> None:
     stop_event.set()
 
 def _log_threshold_warnings(sample: Dict[str, Any]) -> None:
-    cpu_percent = sample["cpu_usage_percent"]
-    if cpu_percent > CPU_WARNING_THRESHOLD_PERCENT:
-        LOGGER.warning(
-            "High CPU usage on %s: %.1f%% (threshold: %.1f%%)",
-            sample["device_id"],
-            cpu_percent,
-            CPU_WARNING_THRESHOLD_PERCENT,
-        )
+    metrics = (
+        ("CPU", "cpu_usage_percent"),
+        ("RAM", "ram_usage_percent"),
+        ("Disk", "disk_usage_percent"),
+        ("GPU", "gpu_usage_percent"),
+    )
+    for name, key in metrics:
+        value = sample[key]
+        if value is not None and value > USAGE_WARNING_THRESHOLD_PERCENT:
+            LOGGER.warning(
+                "High %s usage on %s: %.1f%% (threshold: %.1f%%)",
+                name,
+                sample["device_id"],
+                value,
+                USAGE_WARNING_THRESHOLD_PERCENT,
+            )
 
 
 def run() -> int:

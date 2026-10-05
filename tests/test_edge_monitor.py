@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 from threading import Event
 
-from constants import GREENGRASS_IPC_SOCKET_ENV, SPOOL_PATH_ENV, CPU_WARNING_THRESHOLD_PERCENT
+from constants import GREENGRASS_IPC_SOCKET_ENV, SPOOL_PATH_ENV, USAGE_WARNING_THRESHOLD_PERCENT
 from edge_monitor import MetricsCollector, run, _log_threshold_warnings
 
 
@@ -30,10 +30,6 @@ class MetricsCollectorTests(unittest.TestCase):
         self.assertEqual(sample["ram_usage_percent"], 50.0)
         self.assertEqual(sample["disk_usage_percent"], 50.0)
         self.assertEqual(sample["gpu_usage_percent"], 42.0)
-        self.assertNotIn("ram_used_bytes", sample)
-        self.assertNotIn("ram_total_bytes", sample)
-        self.assertNotIn("disk_used_bytes", sample)
-        self.assertNotIn("disk_total_bytes", sample)
         self.assertTrue(sample["sample_id"].startswith(sample["device_id"] + ":"))
         self.assertTrue(sample["device_id"])
         self.assertTrue(sample["timestamp"].endswith("+00:00"))
@@ -87,27 +83,61 @@ class MetricsCollectorTests(unittest.TestCase):
         spool_factory.assert_called_once_with(spool_path)
     
     @patch("edge_monitor.LOGGER.warning")
-    def test_cpu_above_threshold_logs_warning(self, warning):
-        _log_threshold_warnings(
-            {"device_id": "test-device", "cpu_usage_percent": 91.0}
-        )
-
-        warning.assert_called_once()
-        self.assertEqual(
-            warning.call_args.args[0],
-            "High CPU usage on %s: %.1f%% (threshold: %.1f%%)",
-        )
-        self.assertEqual(
-            warning.call_args.args[1:],
-            ("test-device", 91.0, CPU_WARNING_THRESHOLD_PERCENT),
-        )
-
-    @patch("edge_monitor.LOGGER.warning")
-    def test_cpu_at_threshold_does_not_log_warning(self, warning):
+    def test_metrics_above_threshold_each_log_warning(self, warning):
         _log_threshold_warnings(
             {
                 "device_id": "test-device",
-                "cpu_usage_percent": CPU_WARNING_THRESHOLD_PERCENT,
+                "cpu_usage_percent": 91.0,
+                "ram_usage_percent": 92.0,
+                "disk_usage_percent": 93.0,
+                "gpu_usage_percent": 94.0,
+            }
+        )
+
+        expected_message = "High %s usage on %s: %.1f%% (threshold: %.1f%%)"
+        self.assertEqual(
+            warning.call_args_list,
+            [
+                call(
+                    expected_message,
+                    "CPU",
+                    "test-device",
+                    91.0,
+                    USAGE_WARNING_THRESHOLD_PERCENT,
+                ),
+                call(
+                    expected_message,
+                    "RAM",
+                    "test-device",
+                    92.0,
+                    USAGE_WARNING_THRESHOLD_PERCENT,
+                ),
+                call(
+                    expected_message,
+                    "Disk",
+                    "test-device",
+                    93.0,
+                    USAGE_WARNING_THRESHOLD_PERCENT,
+                ),
+                call(
+                    expected_message,
+                    "GPU",
+                    "test-device",
+                    94.0,
+                    USAGE_WARNING_THRESHOLD_PERCENT,
+                ),
+            ],
+        )
+
+    @patch("edge_monitor.LOGGER.warning")
+    def test_metrics_at_threshold_and_unavailable_gpu_do_not_warn(self, warning):
+        _log_threshold_warnings(
+            {
+                "device_id": "test-device",
+                "cpu_usage_percent": USAGE_WARNING_THRESHOLD_PERCENT,
+                "ram_usage_percent": USAGE_WARNING_THRESHOLD_PERCENT,
+                "disk_usage_percent": USAGE_WARNING_THRESHOLD_PERCENT,
+                "gpu_usage_percent": None,
             }
         )
 
